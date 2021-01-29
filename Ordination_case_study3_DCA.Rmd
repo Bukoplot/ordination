@@ -1,0 +1,86 @@
+---
+title: "Ordination in Earth sciences recommended workflow, part 3: DCA"
+author: "Or M. Bialik, Emilia Jarochowska and Michal Grossowicz"
+date: "12/26/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(vegan)
+library(RColorBrewer)
+library(ggplot2)
+load("reduced3t.Rdata")
+load("sample.prop.Rdata")
+```
+
+We use the transformed dataset and also standardize the variables to make them comparable.
+
+```{r standardization, fig.height=8, fig.width=10}
+reduced3t_std <- decostand(reduced3t, method="range", MARGIN =2)
+pairs(reduced3t_std,
+      lower.panel = NULL, 
+      col = brewer.pal(7, name="RdBu")[sample.prop$`Lithological descripton`])
+par(xpd = TRUE)
+legend("bottomleft", fill = brewer.pal(7, name="RdBu"), legend = c( levels(sample.prop$`Lithological descripton`)), cex=0.7) 
+```
+
+Teh distributions should remain the same, but standardized to the same range (0 to 1). Now we can perform DCA and extract sample and variable scores.
+
+```{r decorana}
+reduced3_DCA <- decorana(reduced3t_std, ira=0)
+variablescores <- as.data.frame(scores(reduced3_DCA, display = "species"))
+variablescores$species <- rownames(variablescores)
+samplescores <- as.data.frame(scores(reduced3_DCA, display="sites"))
+samplescores$sample <- rownames(samplescores)
+samplescores$Lithology <- sample.prop$`Lithological descripton`
+```
+
+We use extracted sample and variable scores to plot, because they are easier to handle as separate objects, compared to the clunky DCA output object.
+
+```{r plot DCA}
+ggplot() + 
+  geom_text(data=variablescores,aes(x=DCA1,y=DCA2,label=species),size=3) +  
+  geom_point(data=samplescores,aes(x=DCA1,y=DCA2,shape=Lithology,colour=Lithology),size=5) + 
+  geom_text(data=samplescores,aes(x=DCA1,y=DCA2,label=sample),size=2.5,vjust=0, alpha=0.5) +
+  scale_colour_brewer(palette="RdBu") +
+  coord_equal()+
+    theme_bw()+
+  theme(legend.position = "none")
+```
+
+As with NMDS, the plot will be more legible if we focus on samples, but the above graphic allows us to interpret the "gradient" reconstructed by DCA.
+
+```{r plot DCA samples, fig.height=8, fig.width=10, echo = FALSE}
+ggplot() + 
+  geom_point(data=samplescores,aes(x=DCA1,y=DCA2,shape=Lithology,colour=Lithology),size=5) + 
+  geom_text(data=samplescores,aes(x=DCA1,y=DCA2,label=sample),size=4,vjust=0, alpha=0.5) +
+  scale_colour_brewer(palette="RdBu") +
+  coord_equal()+
+    theme_bw()+
+  theme(legend.position = "none")
+```
+
+Adding convex hulls:
+
+```{r plot DCA samples with hulls, fig.height=8, fig.width=10}
+grp.Limestone <- samplescores[samplescores$Lithology == "Limestone",][chull(samplescores[samplescores$Lithology == "Limestone", c("DCA1", "DCA2")]), ]
+
+grp.Dolomite <- samplescores[samplescores$Lithology == "Dolomite", ][chull(samplescores[samplescores$Lithology == "Dolomite", c("DCA1", "DCA2")]), ]  
+
+grp.Marly_dolomite <- samplescores[samplescores$Lithology == "Marly dolomite", ][chull(samplescores[samplescores$Lithology == "Marly dolomite", c("DCA1", "DCA2")]), ]  
+
+
+hull.data <- rbind(grp.Limestone, grp.Dolomite, grp.Marly_dolomite)  
+
+ggplot() + 
+    geom_polygon(data=hull.data,aes(x=DCA1,y=DCA2,fill=Lithology,group=Lithology),alpha=0.30)+
+  scale_fill_manual(values = c("#FDDBC7","#67A9CF","#D1E5F0"))+
+  geom_point(data=samplescores,aes(x=DCA1,y=DCA2,shape=Lithology,colour=Lithology),size=3) + 
+  geom_text(data=samplescores,aes(x=DCA1,y=DCA2,label=sample),size=2.5,vjust=0, alpha=0.5) +
+  scale_colour_brewer(palette="RdBu") +
+  coord_equal()+
+    theme_bw()+
+  theme(legend.position = "none")
+```
+

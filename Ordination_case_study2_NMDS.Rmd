@@ -1,0 +1,78 @@
+---
+title: "Ordination in Earth sciences recommended workflow, part 2: NMDS"
+author: "Or M. Bialik, Emilia Jarochowska and Michal Grossowicz"
+date: "12/26/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = T)
+library(vegan)
+library(RColorBrewer)
+library(ggplot2)
+load("reduced3.Rdata")
+load("sample.prop.Rdata")
+```
+
+# NMDS
+
+To compare NMDS output with PCA performed in part 1, we use the same input dataset. Our variables are mixed in the sense that they are expressed in various units and some are compositional, but there are no ordinal or binary variables. For such case, the Gower or altGower distance metrics should be sufficient. We don't have to remove skewness so we use un-transformed data.
+
+```{r}
+set.seed(123)
+nmds_geochem <- metaMDS(reduced3, distance="gower", autotransform = F, wascores = F)
+```
+
+Fortunately, the stress value is acceptable (below 0.2), so the ordination should reflect the structure of the dataset sufficiently faithfully.
+
+```{r extracting scores, echo = FALSE}
+data.scores <- as.data.frame(scores(nmds_geochem))  
+data.scores$site <- rownames(data.scores)  
+data.scores$Lithology <- sample.prop$`Lithological descripton`
+species_object <- envfit(nmds_geochem, reduced3)
+species.scores <- as.data.frame(species_object$vectors$arrows)
+species.scores$species <- rownames(species.scores)
+```
+
+
+```{r plot NMDS, fig.height=8, fig.width=10, echo = FALSE}
+ggplot() + 
+  geom_text(data=species.scores,aes(x=NMDS1,y=NMDS2,label=species),size=3) +  
+  geom_point(data=data.scores,aes(x=NMDS1,y=NMDS2,shape=Lithology,colour=Lithology),size=3) + 
+  geom_text(data=data.scores,aes(x=NMDS1,y=NMDS2,label=site),size=3,vjust=0, alpha=0.5) +
+  scale_colour_brewer(palette="RdBu") +
+  coord_equal()
+```
+
+It is not usual to plot both variables and data points on an NMDS plot. So let's focus on samples only.
+
+```{r plot NMDS samples, fig.height=8, fig.width=10, echo = FALSE}
+grp.Limestone <- data.scores[data.scores$Lithology == "Limestone", ][chull(data.scores[data.scores$Lithology == 
+                                                                   "Limestone", c("NMDS1", "NMDS2")]), ]  
+grp.Dolomite <- data.scores[data.scores$Lithology == "Dolomite", ][chull(data.scores[data.scores$Lithology == 
+                                                                   "Dolomite", c("NMDS1", "NMDS2")]), ]  
+grp.Marly_dolomite <- data.scores[data.scores$Lithology == "Marly dolomite", ][chull(data.scores[data.scores$Lithology == 
+                                                                                 "Marly dolomite", c("NMDS1", "NMDS2")]), ]  
+
+
+hull.data <- rbind(grp.Limestone, grp.Dolomite, grp.Marly_dolomite)  
+
+
+ggplot() + 
+  geom_polygon(data=hull.data,aes(x=NMDS1,y=NMDS2,fill=Lithology,group=Lithology),alpha=0.30)+
+  scale_fill_manual(values = c("#FDDBC7","#67A9CF","#D1E5F0"))+
+  geom_point(data=data.scores,aes(x=NMDS1,y=NMDS2,shape=Lithology,colour=Lithology),size=4) + 
+  geom_text(data=data.scores,aes(x=NMDS1,y=NMDS2,label=site),size=3,vjust=0, alpha=0.5) +
+  scale_colour_brewer(palette="RdBu") +
+  coord_equal()+
+  theme_bw()
+ggsave("nmds.eps", width = 170, height = 120, units = "mm")
+```
+
+We can also evaluate how well this reflects the structure of the dataset by examining a Shepard (stress) plot:
+
+```{r stressplot}
+stressplot(nmds_geochem)
+```
+

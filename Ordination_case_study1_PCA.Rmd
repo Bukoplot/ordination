@@ -1,0 +1,193 @@
+---
+title: "Ordination test case"
+author: "Or M. Bialik, Emilia Jarochowska and Michal Grossowicz"
+date: "12/26/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(pheatmap)
+library(MVN)
+library(moments)
+library(vegan)
+library(RColorBrewer)
+library(ggbiplot)
+palette <- brewer.pal(7, name="RdBu")
+```
+# Preparing and cleaning the data
+One of the common trivial causes for errors is that variable classes are not correctly assigned. Categorical variables should have the class "factor", numeric variables should be "numeric" etc. If the original dataset contains text annotations in variables that are otherwise meant to be numeric (e.g. "not measured" or "amount too small" or "<0.01"), the entire variable will be imported as character and the calculations won't work. This problem also applies to Excel spreadsheets, only variable format cannot be controlled in a reproducible, platform-independent way. In R the best practice is to explicitly state the format of the variable at import - see the example below.
+
+The dataset is first cleaned from columns containing redundant variables, e.g. standard deviations etc. and then of rows containing empty cells. Two categorical variables (Lithological description and packing) are relegated to a separate list describing sample properties. 
+
+
+```{r data import}
+original <- read.csv(file="S4._Dataset_Bialik_et_al_2018.csv", header=T, colClasses=c("character",rep("factor",2), rep("numeric",20))) #stating variable format
+rownames(original)<-original$Sample.ID #the first column is used as row names
+original<-original[,-1] #and the dropped from the dataset
+
+colnames(original)<-c("Lithological descripton","Packing",	"Calcite (%)",	"MgCO3 in dolomite (%mol)",	"Sr(ppm)",	"IC (%Wt)",	"Ti(ppm)",	"Zr(ppm)",	"Mn(ppm)",	"V/Cr",	"Ni/Co",	"Ce/Ce*",	"d13C (VPDB)",	"1σ",	"d18O (VPDB)", 	"1σ",	"87Sr/86Sr Initial Value",	"1 SE",	"d26MgDSM3",	"2σ",	"d25MgDSM3",	"2σ") 
+```
+
+Turns out some R packages have difficulty with Greek letters in variable names so we use d instead of δ. Also it turns out there are only 6 cases that are complete in all variables. This is largely driven by two variables: δ25MgDSM3 and IC (%Wt) that have complementary measurement patterns so let's try to visualise how they are distributed.
+
+```{r trimming the dataset}
+reduced <- original[,-c(14,16,18,20,22)] #dropping SDs
+completeCases <- reduced[complete.cases(reduced), ] 
+pheatmap(reduced[,3:17], cluster_rows=FALSE, cluster_cols=FALSE)
+# Keeping only rows without empty cells
+```
+
+As the variables are not normalized, the heat map doesn't tell us anything about their relationships (yet) but it shows empty cells. Let's take δ25MgDSM3 as the main offender and kick it out. 
+
+```{r data trimming 2}
+reduced2 <- reduced[,-c(16:17)]
+pheatmap(reduced2[,3:15], cluster_rows=FALSE, cluster_cols=FALSE)
+```
+
+This looks much better, but if we now exclude rows containing NAs, we will end up with 14 rows only (14 x 15 matrix), whereas if we kick out IC (%Wt), we will have the following dimensions:
+
+```{r data trimming 3}
+reduced3 <- reduced2[,-6]
+dim(reduced3[complete.cases(reduced3),])
+```
+
+We keep this subset for further analysis. The first two variables are categorical and will be used as sample properties to identify groups in ordination plots, but not used in the ordination itself. We can immediately visualise how the variables are distributed between the lithological classes.
+
+```{r reduced dataset overview, fig.height=8, fig.width=10}
+reduced3<-reduced3[complete.cases(reduced3),]
+sample.prop<-reduced3[,1:2]
+reduced3<-reduced3[,3:14]
+pairs(reduced3,
+      lower.panel = NULL, 
+      col = brewer.pal(9, name="RdBu")[sample.prop$`Lithological descripton`])
+par(xpd = TRUE)
+legend("bottomleft", fill = brewer.pal(9, name="RdBu"), legend = c( levels(sample.prop$`Lithological descripton`)))
+```
+
+Here we see some scientific insights, e.g. that marls seems to be an outlier with respect to most variables, but we also see another common causes for analysis complications: the same levels of the `Lithological description` factor are spelled in two different was and thus treated as different. We can also order the levels of the factor to impose color coding (similar lithologies will be plotted in similar colors).
+
+```{r sorting out the levels}
+levels(sample.prop$`Lithological descripton`)[levels(sample.prop$`Lithological descripton`)=="dolomite"] = "Dolomite"
+levels(sample.prop$`Lithological descripton`)[levels(sample.prop$`Lithological descripton`)=="Dolomitic Limestone"] = "Dolomitic limestone"
+levels(sample.prop$`Lithological descripton`)[levels(sample.prop$`Lithological descripton`)=="marl"] = "Marl" #For consistency
+sample.prop$`Lithological descripton` <- factor(sample.prop$`Lithological descripton`, levels=c("Marl","Marly limestone","Limestone","Dolomitic limestone","Dolomite","Marly dolomite","Dolomitic marl"))
+```
+
+Hopefully the data overview will be more legible now:
+
+```{r corrected factor levels, fig.height=8, fig.width=10, echo=FALSE}
+pairs(reduced3,
+      lower.panel = NULL, 
+      col = brewer.pal(7, name="RdBu")[sample.prop$`Lithological descripton`])
+par(xpd = TRUE)
+legend("bottomleft", fill = brewer.pal(7, name="RdBu"), legend = c( levels(sample.prop$`Lithological descripton`))) 
+```
+
+We can do the same for the Embry & Klovan categories:
+
+```{r overview according to E&K, fig.height=8, fig.width=10, echo=FALSE}
+sample.prop$Packing <- factor(sample.prop$Packing, levels=c("mudstone","wackestone","floatstone","packstone","grainstone","sparstone"))
+pairs(reduced3,
+      lower.panel = NULL, 
+      col = brewer.pal(6, name="PuOr")[sample.prop$Packing])
+par(xpd = TRUE)
+legend("bottomleft", fill = brewer.pal(6, name="PuOr"), legend = c( levels(sample.prop$Packing)))  
+```
+
+# Transforming the data
+
+First we need to see how the variables are distributed.
+
+```{r histograms, echo=FALSE}
+par(mfrow = c(3,4))
+
+for (i in 1:12){
+  hist(reduced3[,i], col="gray", main = colnames(reduced3)[i], xlab='')
+}
+```
+
+It's as bad as it gets! If we run tests for multivariate and univariate normality, we will see that none of the variables neither the dataset as a whole is normally distributed. Let us only display Royston's test here, but other tests are available in this package.
+
+```{r multivariate normality}
+mvn(reduced3, mvnTest = "royston")
+```
+
+
+```{r transformation}
+reduced3t <- reduced3
+# Positively skewed variables
+reduced3t$`Calcite (%)`<-(reduced3$`Calcite (%)`)^(1/3)
+reduced3t$`Sr(ppm)`<-sqrt(reduced3$`Sr(ppm)`)
+reduced3t$`Zr(ppm)`<-sqrt(reduced3$`Zr(ppm)`)
+reduced3t$`Mn(ppm)`<-sqrt(reduced3$`Mn(ppm)`)
+reduced3t$`Ni/Co`<-(reduced3$`Ni/Co`)^(1/3)
+
+par(mfrow = c(3,4))
+for (i in c(1,3,5,6,8)){
+  plot(density(reduced3[,i]), col="blue", main = colnames(reduced3)[i], xlab='')
+  plot(density(reduced3t[,i]), col="red", main = c(colnames(reduced3)[i], "transformed"), xlab='')
+}
+```
+
+Did it improve test results?
+
+```{r multinormality test after transformation}
+mvn(reduced3t, mvnTest = "royston")
+```
+
+The data does not follow a multinormal distribution and for only one variable (Zr content) univariate normality cannot be rejected. However, we've reduced the skewnesses of these variables, which can lead to artefacts in PCA.
+Skewness in the original variables:
+```{r skewness before}
+skewness(reduced3[,c(1,3,5,6,8)])
+```
+Skewness in the transformed variables:
+```{r skewness after}
+skewness(reduced3t[,c(1,3,5,6,8)])
+```
+
+## PCA
+Finally we can run PCA on this dataset but it doesn't look great...
+
+```{r PCA biplot by Lithology}
+pca1<-princomp(reduced3t, cor = T, scores = T)
+ggbiplot(pca1, obs.scale = 1, var.scale = 1,
+         groups = sample.prop$`Lithological descripton`, ellipse = TRUE, circle = TRUE) +
+  scale_colour_brewer(palette="RdBu") +
+  theme(legend.direction = 'horizontal', legend.position = 'top')+
+  theme_bw()
+```
+
+The ellipses are a variation of convex hulls that is less sensitive to outliers. The groups are not well separatated using this set of variables, except for Limestone. 
+
+```{r PCA biplot by Embry & Klovan}
+ggbiplot(pca1, obs.scale = 1, var.scale = 1,
+         groups = sample.prop$Packing, ellipse = TRUE, circle = TRUE) +
+  scale_colour_brewer(palette="PuOr") +
+  theme(legend.direction = 'horizontal', legend.position = 'top')+
+  theme_bw()
+```
+
+Also the first two principal components explain merely ´r 31.7+19.1` of the total variance in the dataset.
+
+```{r}
+normal <- ggscreeplot(pca1)
+ggscreeplot(pca1, type="cev")+
+  geom_line(aes(y=normal$data$yvar), col ="darkred")+
+  geom_point(aes(y=normal$data$yvar), col ="darkred")
+```
+
+And we can use the loadings to interpret the first two components:
+
+```{r loadings, fig.width=8, fig.height=6, echo=FALSE}
+par(mfrow=c(2,1))
+barplot(pca1$loadings[,1], main="Principal Component 1")
+barplot(pca1$loadings[,2], main="Principal Component 2")
+```
+
+```{r}
+save(reduced3, file = "reduced3.Rdata")
+save(sample.prop, file = "sample.prop.Rdata")
+save(reduced3t, file = "reduced3t.Rdata")
+```
+
